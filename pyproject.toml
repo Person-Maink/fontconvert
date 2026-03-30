@@ -1,10 +1,23 @@
-[tool.poetry]
+[project]
 name = "fontconvert"
 version = "0.1.0"
-description = "Monospace-first font build pipeline"
-authors = ["Person-Maink <your_email@example.com>"]
-license = "MIT"
+description = "UFO-based font build pipeline from SVGs (ASCII default, monospace-first)"
+requires-python = ">=3.10"
+dependencies = [
+  "fontmake>=3.7.0",
+  "ufoLib2>=0.16.0",
+  "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+fontconvert = "fontconvert.cli:main"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
