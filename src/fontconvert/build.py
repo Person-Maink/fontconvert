@@ -5,7 +5,10 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from importlib.resources.abc import Traversable
+try:
+    from importlib.resources.abc import Traversable  # Python 3.11+
+except ImportError:
+    from importlib.abc import Traversable  # Python 3.10
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
