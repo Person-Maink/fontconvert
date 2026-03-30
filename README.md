@@ -9,6 +9,7 @@ A command-line tool that builds TTF and OTF fonts from SVG glyph artwork via a
 
 - Build **TTF** and/or **OTF** fonts directly from SVG files
 - Two input modes: per-glyph SVG files in a directory, or a single combined SVG
+- **`--force` bitmap mode**: build a monospace TTF directly from PNG letter images
 - Monospace-first: optional fixed advance width for every glyph
 - Full printable ASCII character set by default (U+0020 – U+007E)
 - Simple YAML manifest for font metadata and build settings
@@ -60,6 +61,8 @@ fontconvert build [OPTIONS]
 | `--out-dir PATH` | `dist` | Directory where built fonts are written |
 | `--ttf` | *(default when neither flag is set)* | Build a TTF font |
 | `--otf` | | Also build an OTF font |
+| `--force` | | Build a **bitmap-based monospace TTF** from PNG letter images (see [Bitmap / `--force` mode](#bitmap----force-mode)) |
+| `--images-dir PATH` | `glyphs/png` | Directory containing PNG glyph images (only used with `--force`) |
 
 ### Examples
 
@@ -72,7 +75,61 @@ fontconvert build --otf
 
 # Custom paths
 fontconvert build --manifest my_project/manifest.yaml --out-dir output/
+
+# Bitmap monospace TTF from PNG images
+fontconvert build --force --images-dir glyphs/png
 ```
+
+## Bitmap / `--force` mode
+
+When `--force` is given, `fontconvert build` switches to a **bitmap pipeline**
+inspired by [benob/png_font_to_ttf](https://github.com/benob/png_font_to_ttf).
+Instead of tracing SVG vector artwork, each non-background pixel is rendered as
+a filled square contour, producing a pixel-perfect bitmap-style TTF.
+
+### How it works
+
+1. For every glyph listed in the mapping file, load `{glyph_name}.png` from
+   `--images-dir` (default: `glyphs/png/`).
+2. **Validate** that all images are the same pixel size.  If any image differs,
+   the build fails immediately with a descriptive error and no output is written.
+3. Scale the pixel grid to font units: `scale = units_per_em / image_height`.
+4. For every dark pixel (luminance ≤ 127, i.e. the foreground ink), draw a
+   filled square contour at the corresponding font coordinate.
+5. Every glyph receives the same advance width (`int(image_width × scale)`),
+   making the font **strictly monospace**.
+6. Build the UFO with ufoLib2 and compile to TTF with fontmake, using the font
+   metadata from `manifest.yaml` (family name, style, UPM, etc.).
+
+### PNG image conventions
+
+- **One PNG per glyph**, named exactly after the glyph's PostScript name
+  (e.g. `A.png`, `exclam.png`, `space.png`).
+- **Foreground is dark** (luminance ≤ 127); background is light or transparent.
+  Transparent pixels are composited over white before thresholding.
+- **All images must share the same pixel dimensions** — this is enforced and
+  cannot be overridden.
+
+### Example layout
+
+```
+glyphs/
+  png/
+    A.png
+    B.png
+    space.png
+    exclam.png
+    ...
+```
+
+```bash
+fontconvert build --force
+# or with explicit paths:
+fontconvert build --force --images-dir path/to/pngs --out-dir dist
+```
+
+> **Note:** `--otf` is silently ignored when `--force` is used; only a TTF is
+> produced.
 
 ## Manifest (`manifest.yaml`)
 
@@ -163,11 +220,13 @@ You can supply a custom mapping file with `--mapping`.
 ```
 fontconvert/
 ├── glyphs/
-│   └── manifest.yaml       # build configuration
+│   ├── manifest.yaml       # build configuration
+│   └── png/                # PNG glyph images for --force mode
 ├── src/
 │   └── fontconvert/
 │       ├── __init__.py
-│       ├── build.py        # core build pipeline
+│       ├── bitmap.py       # bitmap PNG→TTF pipeline (--force)
+│       ├── build.py        # core SVG build pipeline
 │       ├── cli.py          # CLI entry point
 │       └── manifest.py     # manifest loader
 ├── ASCII_MAPPING.tsv       # default glyph-to-codepoint table
