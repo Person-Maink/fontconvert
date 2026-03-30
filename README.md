@@ -61,7 +61,7 @@ fontconvert build [OPTIONS]
 | `--out-dir PATH` | `dist` | Directory where built fonts are written |
 | `--ttf` | *(default when neither flag is set)* | Build a TTF font |
 | `--otf` | | Also build an OTF font |
-| `--force` | | Build a **bitmap-based monospace TTF** from PNG letter images (see [Bitmap / `--force` mode](#bitmap----force-mode)) |
+| `--force` | | Build a **bitmap-based monospace TTF** from PNG letter images; images with differing sizes are auto-fitted to the most common size (see [Bitmap / `--force` mode](#bitmap----force-mode)) |
 | `--images-dir PATH` | `glyphs/png` | Directory containing PNG glyph images (only used with `--force`) |
 
 ### Examples
@@ -91,8 +91,12 @@ a filled square contour, producing a pixel-perfect bitmap-style TTF.
 
 1. For every glyph listed in the mapping file, load `{glyph_name}.png` from
    `--images-dir` (default: `glyphs/png/`).
-2. **Validate** that all images are the same pixel size.  If any image differs,
-   the build fails immediately with a descriptive error and no output is written.
+2. **Check image sizes.**  If all images share the same pixel dimensions the
+   build proceeds immediately.  If any image differs, a warning is printed to
+   stderr listing every distinct size and which glyphs have that size.  All
+   images are then automatically **center-cropped or center-padded** (with a
+   white background) to match the **most common size** so the build can
+   continue.
 3. Scale the pixel grid to font units: `scale = units_per_em / image_height`.
 4. For every dark pixel (luminance ≤ 127, i.e. the foreground ink), draw a
    filled square contour at the corresponding font coordinate.
@@ -107,8 +111,9 @@ a filled square contour, producing a pixel-perfect bitmap-style TTF.
   (e.g. `A.png`, `exclam.png`, `space.png`).
 - **Foreground is dark** (luminance ≤ 127); background is light or transparent.
   Transparent pixels are composited over white before thresholding.
-- **All images must share the same pixel dimensions** — this is enforced and
-  cannot be overridden.
+- **Images should ideally share the same pixel dimensions.**  If they differ,
+  a warning is printed and images are auto-fitted (center-cropped or
+  center-padded with white) to the most common size.
 
 ### Example layout
 

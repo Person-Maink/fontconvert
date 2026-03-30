@@ -28,8 +28,9 @@ def main() -> None:
         action="store_true",
         help=(
             "Build a bitmap-based monospace TTF from PNG letter images "
-            "(one {glyph_name}.png per glyph).  All images must be the same "
-            "size; the build fails with an error otherwise.  "
+            "(one {glyph_name}.png per glyph).  If images have different "
+            "sizes, a warning is printed and all images are cropped/padded "
+            "to the most common size so the build can continue.  "
             "--otf is ignored when --force is used."
         ),
     )
