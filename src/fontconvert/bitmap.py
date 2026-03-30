@@ -11,13 +11,14 @@ Key differences from the original script:
 - Reuses the manifest for font metadata (family name, style, UPM, etc.).
 - Enforces monospace: advance width is computed from the image dimensions and
   applied identically to every glyph.
-- Validates that all glyph images share the same pixel dimensions before
-  generating any output.
+- When glyph images have differing pixel dimensions, warns and crops/pads all
+  images to the most common size so the build can continue.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -32,12 +33,19 @@ from .build import _ensure_notdef, _run, load_ascii_mapping
 from .manifest import load_manifest
 
 
-def _load_image_grayscale(img_path: Path) -> tuple[int, int, object]:
+def _load_image_grayscale(
+    img_path: Path,
+    target_size: tuple[int, int] | None = None,
+) -> tuple[int, int, object]:
     """Return a (width, height, pixels) tuple where pixels[col, row] is 0-255.
 
     Transparent pixels are composited onto a white background before
     converting to grayscale so that transparent-background PNGs work
     correctly alongside solid-background ones.
+
+    If *target_size* is given as ``(width, height)``, the image is
+    center-cropped (if larger) or center-padded with white (if smaller) so
+    that the returned dimensions always equal *target_size*.
     """
     from PIL import Image
 
@@ -45,7 +53,68 @@ def _load_image_grayscale(img_path: Path) -> tuple[int, int, object]:
     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
     bg.alpha_composite(img)
     gray = bg.convert("L")
+
+    if target_size is not None and gray.size != target_size:
+        gray = _fit_to_size(gray, target_size)
+
     return gray.width, gray.height, gray.load()
+
+
+def _fit_to_size(img: object, target_size: tuple[int, int]) -> object:
+    """Return *img* cropped or padded with white to exactly *target_size*.
+
+    The image content is centered within the target canvas so that equal
+    amounts are removed/added from each side.
+
+    Parameters
+    ----------
+    img:
+        A :class:`PIL.Image.Image` instance (any mode).
+    target_size:
+        ``(target_width, target_height)`` in pixels.
+    """
+    from PIL import Image
+
+    tw, th = target_size
+    sw, sh = img.size
+
+    # Create a white canvas of the target size.
+    # A fill of 255 means white for "L" (grayscale) mode, which is the only
+    # mode used internally; PIL broadcasts the scalar to all channels when
+    # the image has multiple channels.
+    canvas = Image.new(img.mode, (tw, th), 255)
+
+    # Offset for centering: positive → paste starts away from edge (padding);
+    # negative → source starts away from its own edge (cropping).
+    offset_x = (tw - sw) // 2
+    offset_y = (th - sh) // 2
+
+    # Source region to copy from *img* (handles cropping case).
+    src_x = max(0, -offset_x)
+    src_y = max(0, -offset_y)
+    src_x2 = src_x + min(sw, tw)
+    src_y2 = src_y + min(sh, th)
+
+    # Destination position on the canvas (handles padding case).
+    dst_x = max(0, offset_x)
+    dst_y = max(0, offset_y)
+
+    region = img.crop((src_x, src_y, src_x2, src_y2))
+    canvas.paste(region, (dst_x, dst_y))
+    return canvas
+
+
+def _most_common_size(
+    sizes: dict[str, tuple[int, int]],
+) -> tuple[int, int]:
+    """Return the most common ``(width, height)`` in *sizes*.
+
+    Ties are broken by preferring the largest area, then the largest width.
+    """
+    counts: dict[tuple[int, int], int] = {}
+    for sz in sizes.values():
+        counts[sz] = counts.get(sz, 0) + 1
+    return max(counts, key=lambda sz: (counts[sz], sz[0] * sz[1], sz[0]))
 
 
 def _pixels_to_contours(
@@ -54,6 +123,7 @@ def _pixels_to_contours(
     img_height: int,
     scale: float,
     pen,
+    target_size: tuple[int, int] | None = None,
 ) -> None:
     """Draw one closed square contour per foreground pixel into *pen*.
 
@@ -66,8 +136,11 @@ def _pixels_to_contours(
         y0 = (img_height - row - 1) * scale   (Y-flip: screen→font)
         x1 = x0 + scale
         y1 = y0 + scale
+
+    If *target_size* is given, the image is fitted to that size before
+    tracing (see :func:`_load_image_grayscale`).
     """
-    width, height, pixels = _load_image_grayscale(img_path)
+    width, height, pixels = _load_image_grayscale(img_path, target_size=target_size)
     for row in range(height):
         for col in range(width):
             if pixels[col, row] <= 127:  # foreground / ink pixel
@@ -113,8 +186,6 @@ def build_bitmap(
     FileNotFoundError
         If *images_dir* does not exist, or if any expected glyph image is
         missing.
-    ValueError
-        If the glyph images are not all the same size.
     RuntimeError
         If fontmake does not produce a TTF file.
     """
@@ -139,7 +210,7 @@ def build_bitmap(
         glyph_images[m.glyph_name] = img_path
 
     # ------------------------------------------------------------------
-    # Validate that all images share the same pixel dimensions.
+    # Check image sizes; warn and auto-fit if they differ.
     # ------------------------------------------------------------------
     sizes: dict[str, tuple[int, int]] = {}
     for name, img_path in glyph_images.items():
@@ -147,20 +218,23 @@ def build_bitmap(
             sizes[name] = img.size  # (width, height)
 
     unique_sizes = set(sizes.values())
+    canonical_size: tuple[int, int] | None = None
     if len(unique_sizes) > 1:
         size_groups: dict[tuple[int, int], list[str]] = {}
         for name, sz in sizes.items():
             size_groups.setdefault(sz, []).append(name)
-        details = "; ".join(
-            f"{sz[0]}×{sz[1]} → {sorted(names)}"
-            for sz, names in sorted(size_groups.items(), key=lambda item: len(item[1]), reverse=True)
-        )
-        raise ValueError(
-            "--force requires all letter images to be the same size, "
-            f"but found {len(unique_sizes)} different sizes.\n{details}"
-        )
-
-    img_width, img_height = next(iter(unique_sizes))
+        canonical_size = _most_common_size(sizes)
+        lines = [
+            f"warning: images have {len(unique_sizes)} different sizes — "
+            f"all will be cropped/padded to "
+            f"{canonical_size[0]}×{canonical_size[1]} px (most common size).",
+        ]
+        for sz, names in sorted(size_groups.items(), key=lambda item: len(item[1]), reverse=True):
+            lines.append(f"  {sz[0]}×{sz[1]} px → {sorted(names)}")
+        print("\n".join(lines), file=sys.stderr)
+        img_width, img_height = canonical_size
+    else:
+        img_width, img_height = next(iter(unique_sizes))
 
     # Scale so that img_height == units_per_em in font coordinates.
     scale: float = mf.units_per_em / img_height
@@ -192,6 +266,7 @@ def build_bitmap(
                 img_height,
                 scale,
                 g.getPen(),
+                target_size=canonical_size,
             )
 
         _ensure_notdef(ufo, advance_width)
