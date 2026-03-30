@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: fontconvert
-Version: 0.1.0
-Summary: UFO-based font build pipeline from SVGs (ASCII default, monospace-first)
-Requires-Python: >=3.10
-Requires-Dist: fontmake>=3.7.0
-Requires-Dist: ufoLib2>=0.16.0
-Requires-Dist: pyyaml>=6.0.0

@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 import re
 import ufoLib2
+from fontTools.svgLib import SVGPath
 
 from .manifest import load_manifest
 
@@ -104,6 +105,39 @@ def _stage_svgs_from_combined(combined_svg: Path, staged_svgs: Path, mappings: l
         ET.ElementTree(svg).write(out, encoding="utf-8", xml_declaration=True)
 
 
+def _import_svg_outlines(
+    ufo: ufoLib2.Font,
+    staged_svgs: Path,
+    mappings: list[GlyphMapping],
+    upm: int,
+) -> None:
+    """Import SVG path data directly into UFO glyphs using fontTools.svgLib.
+
+    SVG coordinates have Y=0 at the top and Y increasing downward, while UFO
+    coordinates have Y=0 at the baseline and Y increasing upward.  The
+    transform ``(1, 0, 0, -1, 0, upm)`` flips the Y axis so that the top of
+    the SVG canvas lands at ``y=upm`` and the bottom lands at ``y=0``.
+
+    Raises ``ValueError`` if an SVG file cannot be parsed or contains path
+    data that cannot be imported.
+    """
+    transform = (1, 0, 0, -1, 0, upm)
+
+    for m in mappings:
+        svg_file = staged_svgs / f"{m.glyph_name}.svg"
+        if not svg_file.exists():
+            continue
+        glyph = ufo[m.glyph_name]
+        pen = glyph.getPen()
+        try:
+            svg = SVGPath(str(svg_file), transform=transform)
+            svg.draw(pen)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to import SVG for glyph '{m.glyph_name}' ({svg_file}): {exc}"
+            ) from exc
+
+
 def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_format: str) -> Path:
     mf = load_manifest(manifest_path)
     mappings = load_ascii_mapping(mapping_path)
@@ -133,7 +167,6 @@ def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_forma
                 g.width = mono_width
 
         _ensure_notdef(ufo, mono_width)
-        ufo.save(ufo_path)
 
         staged_svgs = tmp / "svgs"
         staged_svgs.mkdir(parents=True, exist_ok=True)
@@ -145,22 +178,9 @@ def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_forma
             assert mf.combined_svg is not None
             _stage_svgs_from_combined(mf.combined_svg, staged_svgs, mappings)
 
-        # Import outlines, then compile
-        import_dir = tmp / "import"
-        import_dir.mkdir(parents=True, exist_ok=True)
-
-        _run(
-            [
-                "fontmake",
-                "-u",
-                str(ufo_path),
-                "--import-outline",
-                "--svg-dir",
-                str(staged_svgs),
-                "--output-dir",
-                str(import_dir),
-            ]
-        )
+        # Import SVG outlines directly into UFO glyphs, then save
+        _import_svg_outlines(ufo, staged_svgs, mappings, mf.units_per_em)
+        ufo.save(ufo_path)
 
         _run(
             [
@@ -187,3 +207,4 @@ def build(manifest_path: Path, mapping_path: Path, out_dir: Path, build_ttf: boo
     if build_otf:
         outs.append(_build_one(manifest_path, mapping_path, out_dir, out_format="otf"))
     return outs
+
