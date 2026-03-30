@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -26,8 +27,8 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def load_ascii_mapping(tsv_path: Path) -> list[GlyphMapping]:
-    if not tsv_path.exists():
+def load_ascii_mapping(tsv_path: Path | Traversable) -> list[GlyphMapping]:
+    if isinstance(tsv_path, Path) and not tsv_path.exists():
         raise FileNotFoundError(f"Missing mapping file: {tsv_path}")
 
     out: list[GlyphMapping] = []
@@ -138,7 +139,7 @@ def _import_svg_outlines(
             ) from exc
 
 
-def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_format: str) -> Path:
+def _build_one(manifest_path: Path, mapping_path: Path | Traversable, out_dir: Path, out_format: str) -> Path:
     mf = load_manifest(manifest_path)
     mappings = load_ascii_mapping(mapping_path)
 
@@ -200,7 +201,7 @@ def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_forma
     return produced[0]
 
 
-def build(manifest_path: Path, mapping_path: Path, out_dir: Path, build_ttf: bool, build_otf: bool) -> list[Path]:
+def build(manifest_path: Path, mapping_path: Path | Traversable, out_dir: Path, build_ttf: bool, build_otf: bool) -> list[Path]:
     outs: list[Path] = []
     if build_ttf:
         outs.append(_build_one(manifest_path, mapping_path, out_dir, out_format="ttf"))
