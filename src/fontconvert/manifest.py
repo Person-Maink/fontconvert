@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
@@ -53,7 +53,7 @@ def load_manifest(path: Path) -> Manifest:
         family_name=family_name,
         style_name=style_name,
         units_per_em=units_per_em,
-        mode=mode,  # type: ignore[assignment]
+        mode=cast(InputsMode, mode),
         svg_dir=svg_dir,
         combined_svg=combined_svg,
         monospace_enabled=monospace_enabled,

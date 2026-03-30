@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+import re
 import ufoLib2
 
 from .manifest import load_manifest
@@ -111,7 +112,9 @@ def _build_one(manifest_path: Path, mapping_path: Path, out_dir: Path, out_forma
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        ufo_path = tmp / f"{mf.family_name.replace(' ', '')}-{mf.style_name}.ufo"
+        safe_family = re.sub(r"[^\w\-]", "_", mf.family_name)
+        safe_style = re.sub(r"[^\w\-]", "_", mf.style_name)
+        ufo_path = tmp / f"{safe_family}-{safe_style}.ufo"
 
         # UFO skeleton
         ufo = ufoLib2.Font()
