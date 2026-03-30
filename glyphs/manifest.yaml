@@ -1,0 +1,25 @@
+family_name: "My Font"
+style_name: "Regular"
+units_per_em: 2048
+
+# directory | combined
+mode: "directory"
+
+inputs:
+  directory:
+    svg_dir: "svg"
+  combined:
+    svg_file: "combined/font.svg"
+
+monospace:
+  enabled: true
+  advance_width: 600
+
+# If omitted or empty: ASCII default (space through tilde) using ASCII_MAPPING.tsv glyph_name column.
+glyphs: []
+
+# Reserved for later
+kerning:
+  enabled: false
+  groups: {}
+  pairs: []
