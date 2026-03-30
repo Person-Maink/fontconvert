@@ -26,7 +26,13 @@ Install the package (and its dependencies) from the project root:
 pip install .
 ```
 
-This installs the `fontconvert` command on your `PATH`.
+This installs the `fontconvert` command. If the installed script is not on your
+`PATH` (a common situation on Windows), you can invoke the tool as a module
+instead:
+
+```bash
+python -m fontconvert build
+```
 
 ## Quick Start
 
