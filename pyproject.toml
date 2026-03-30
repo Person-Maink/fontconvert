@@ -1,0 +1,10 @@
+[tool.poetry]
+name = "fontconvert"
+version = "0.1.0"
+description = "Monospace-first font build pipeline"
+authors = ["Person-Maink <your_email@example.com>"]
+license = "MIT"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
