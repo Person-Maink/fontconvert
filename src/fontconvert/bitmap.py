@@ -36,21 +36,38 @@ from .manifest import load_manifest
 def _load_image_grayscale(
     img_path: Path,
     target_size: tuple[int, int] | None = None,
+    downscale: int = 1,
 ) -> tuple[int, int, object]:
     """Return a (width, height, pixels) tuple where pixels[col, row] is 0-255.
 
-    Transparent pixels are composited onto a white background before
-    converting to grayscale so that transparent-background PNGs work
-    correctly alongside solid-background ones.
+    Transparent pixels are composited onto a **black** background before
+    converting to grayscale.  This matches the convention used by
+    benob/png_font_to_ttf where **dark/black pixels are background** and
+    **light/white pixels are foreground ink**.
+
+    For images with a transparent background and light-coloured glyphs the
+    transparent areas become black (background) after compositing.  For
+    images whose glyph shapes are transparent cut-outs in an otherwise black
+    canvas, the transparent holes become black too — so those images should
+    instead have the glyph area as an opaque light colour.
 
     If *target_size* is given as ``(width, height)``, the image is
-    center-cropped (if larger) or center-padded with white (if smaller) so
+    center-cropped (if larger) or center-padded with black (if smaller) so
     that the returned dimensions always equal *target_size*.
+
+    If *downscale* is greater than 1 the image is down-sampled by that
+    integer factor using box-filter averaging before any further processing.
     """
     from PIL import Image
 
     img = Image.open(img_path).convert("RGBA")
-    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+
+    if downscale > 1:
+        new_w = max(1, img.width // downscale)
+        new_h = max(1, img.height // downscale)
+        img = img.resize((new_w, new_h), Image.BOX)
+
+    bg = Image.new("RGBA", img.size, (0, 0, 0, 255))
     bg.alpha_composite(img)
     gray = bg.convert("L")
 
@@ -61,7 +78,7 @@ def _load_image_grayscale(
 
 
 def _fit_to_size(img: object, target_size: tuple[int, int]) -> object:
-    """Return *img* cropped or padded with white to exactly *target_size*.
+    """Return *img* cropped or padded with black to exactly *target_size*.
 
     The image content is centered within the target canvas so that equal
     amounts are removed/added from each side.
@@ -78,11 +95,10 @@ def _fit_to_size(img: object, target_size: tuple[int, int]) -> object:
     tw, th = target_size
     sw, sh = img.size
 
-    # Create a white canvas of the target size.
-    # A fill of 255 means white for "L" (grayscale) mode, which is the only
-    # mode used internally; PIL broadcasts the scalar to all channels when
-    # the image has multiple channels.
-    canvas = Image.new(img.mode, (tw, th), 255)
+    # Create a black canvas of the target size.
+    # A fill of 0 means black for "L" (grayscale) mode, which is the background
+    # colour in the benob/png_font_to_ttf convention (dark = background).
+    canvas = Image.new(img.mode, (tw, th), 0)
 
     # Offset for centering: positive → paste starts away from edge (padding);
     # negative → source starts away from its own edge (cropping).
@@ -124,10 +140,13 @@ def _pixels_to_contours(
     scale: float,
     pen,
     target_size: tuple[int, int] | None = None,
+    downscale: int = 1,
 ) -> None:
     """Draw one closed square contour per foreground pixel into *pen*.
 
-    Foreground pixels are those whose grayscale value is <= 127 (dark).
+    Foreground pixels are those whose grayscale value is >= 128 (light).
+    This matches the benob/png_font_to_ttf convention where dark/black pixels
+    are background and light/white pixels are foreground ink.
     Squares are drawn counter-clockwise (outer contour direction for UFO/PS).
 
     The pixel at screen coordinates (col, row) — where row=0 is the top —
@@ -139,11 +158,16 @@ def _pixels_to_contours(
 
     If *target_size* is given, the image is fitted to that size before
     tracing (see :func:`_load_image_grayscale`).
+
+    If *downscale* is greater than 1 the image is down-sampled before
+    tracing (see :func:`_load_image_grayscale`).
     """
-    width, height, pixels = _load_image_grayscale(img_path, target_size=target_size)
+    width, height, pixels = _load_image_grayscale(
+        img_path, target_size=target_size, downscale=downscale
+    )
     for row in range(height):
         for col in range(width):
-            if pixels[col, row] <= 127:  # foreground / ink pixel
+            if pixels[col, row] >= 128:  # foreground / ink pixel
                 x0 = col * scale
                 y0 = (height - row - 1) * scale
                 x1 = x0 + scale
@@ -161,6 +185,7 @@ def build_bitmap(
     mapping_path: Path | Traversable,
     manifest_path: Path,
     out_dir: Path,
+    downscale: int = 1,
 ) -> Path:
     """Build a monospace TTF from PNG glyph images.
 
@@ -175,6 +200,11 @@ def build_bitmap(
         Path to the ``manifest.yaml`` file used for font metadata.
     out_dir:
         Directory where the generated TTF will be written.
+    downscale:
+        Integer factor by which to down-sample each glyph image before
+        tracing.  ``1`` (the default) means no down-sampling.  ``2`` halves
+        both dimensions (4× fewer pixels), which reduces contour complexity
+        and output file size at the cost of glyph detail.
 
     Returns
     -------
@@ -211,11 +241,15 @@ def build_bitmap(
 
     # ------------------------------------------------------------------
     # Check image sizes; warn and auto-fit if they differ.
+    # Apply the downscale factor to obtain the effective working dimensions.
     # ------------------------------------------------------------------
     sizes: dict[str, tuple[int, int]] = {}
     for name, img_path in glyph_images.items():
         with Image.open(img_path) as img:
-            sizes[name] = img.size  # (width, height)
+            raw_w, raw_h = img.size
+        eff_w = max(1, raw_w // downscale)
+        eff_h = max(1, raw_h // downscale)
+        sizes[name] = (eff_w, eff_h)
 
     unique_sizes = set(sizes.values())
     canonical_size: tuple[int, int] | None = None
@@ -267,6 +301,7 @@ def build_bitmap(
                 scale,
                 g.getPen(),
                 target_size=canonical_size,
+                downscale=downscale,
             )
 
         _ensure_notdef(ufo, advance_width)
