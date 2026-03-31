@@ -44,6 +44,17 @@ def main() -> None:
             "(default: glyphs/png)"
         ),
     )
+    b.add_argument(
+        "--downscale",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Downscale glyph images by integer factor N before tracing "
+            "(e.g. --downscale 2 halves both dimensions).  Only used with "
+            "--force.  Default: 1 (no downscaling)."
+        ),
+    )
 
     args = p.parse_args()
 
@@ -51,12 +62,16 @@ def main() -> None:
         mapping = args.mapping if args.mapping is not None else _BUNDLED_MAPPING
 
         if args.force:
+            if args.downscale <= 0:
+                print("error: --downscale must be a positive integer (≥ 1)", file=sys.stderr)
+                sys.exit(1)
             try:
                 out = build_bitmap(
                     images_dir=args.images_dir,
                     mapping_path=mapping,
                     manifest_path=args.manifest,
                     out_dir=args.out_dir,
+                    downscale=args.downscale,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 print(f"error: {exc}", file=sys.stderr)

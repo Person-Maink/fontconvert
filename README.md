@@ -63,6 +63,7 @@ fontconvert build [OPTIONS]
 | `--otf` | | Also build an OTF font |
 | `--force` | | Build a **bitmap-based monospace TTF** from PNG letter images; images with differing sizes are auto-fitted to the most common size (see [Bitmap / `--force` mode](#bitmap----force-mode)) |
 | `--images-dir PATH` | `glyphs/png` | Directory containing PNG glyph images (only used with `--force`) |
+| `--downscale N` | `1` | Downscale images by integer factor N before tracing (e.g. `2` halves both dimensions); only used with `--force` |
 
 ### Examples
 
@@ -78,6 +79,9 @@ fontconvert build --manifest my_project/manifest.yaml --out-dir output/
 
 # Bitmap monospace TTF from PNG images
 fontconvert build --force --images-dir glyphs/png
+
+# Bitmap TTF with 2× downscaling (halves each dimension before tracing)
+fontconvert build --force --images-dir glyphs/png --downscale 2
 ```
 
 ## Bitmap / `--force` mode
@@ -95,11 +99,13 @@ a filled square contour, producing a pixel-perfect bitmap-style TTF.
    build proceeds immediately.  If any image differs, a warning is printed to
    stderr listing every distinct size and which glyphs have that size.  All
    images are then automatically **center-cropped or center-padded** (with a
-   white background) to match the **most common size** so the build can
+   black background) to match the **most common size** so the build can
    continue.
 3. Scale the pixel grid to font units: `scale = units_per_em / image_height`.
-4. For every dark pixel (luminance ≤ 127, i.e. the foreground ink), draw a
-   filled square contour at the corresponding font coordinate.
+4. For every light pixel (luminance ≥ 128, i.e. the foreground ink — matching
+   the benob/png_font_to_ttf convention where **dark/black pixels are
+   background**), draw a filled square contour at the corresponding font
+   coordinate.
 5. Every glyph receives the same advance width (`int(image_width × scale)`),
    making the font **strictly monospace**.
 6. Build the UFO with ufoLib2 and compile to TTF with fontmake, using the font
@@ -109,11 +115,26 @@ a filled square contour, producing a pixel-perfect bitmap-style TTF.
 
 - **One PNG per glyph**, named exactly after the glyph's PostScript name
   (e.g. `A.png`, `exclam.png`, `space.png`).
-- **Foreground is dark** (luminance ≤ 127); background is light or transparent.
-  Transparent pixels are composited over white before thresholding.
+- **Foreground is light** (luminance ≥ 128); background is dark or transparent.
+  Transparent pixels are composited over a **black** background before
+  thresholding, so transparent areas are treated as background (not ink).
 - **Images should ideally share the same pixel dimensions.**  If they differ,
   a warning is printed and images are auto-fitted (center-cropped or
-  center-padded with white) to the most common size.
+  center-padded with black) to the most common size.
+
+### Downscaling
+
+If your source images are high-resolution, the resulting font can have very
+many contour points and a large file size.  Use `--downscale N` to reduce
+each image by an integer factor before tracing:
+
+```bash
+# 2× downscale: each dimension is halved before tracing
+fontconvert build --force --downscale 2
+```
+
+A factor of 2–4 is a common starting point.  Higher values produce simpler,
+smaller fonts at the cost of glyph detail.
 
 ### Example layout
 
@@ -131,6 +152,8 @@ glyphs/
 fontconvert build --force
 # or with explicit paths:
 fontconvert build --force --images-dir path/to/pngs --out-dir dist
+# with downscaling:
+fontconvert build --force --images-dir path/to/pngs --downscale 2
 ```
 
 > **Note:** `--otf` is silently ignored when `--force` is used; only a TTF is
