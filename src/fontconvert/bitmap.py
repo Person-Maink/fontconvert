@@ -33,12 +33,12 @@ from .build import _ensure_notdef, _run, load_ascii_mapping
 from .manifest import load_manifest
 
 
-def _load_image_grayscale(
+def _load_processed_image(
     img_path: Path,
     target_size: tuple[int, int] | None = None,
     downscale: int = 1,
-) -> tuple[int, int, object]:
-    """Return a (width, height, pixels) tuple where pixels[col, row] is 0-255.
+) -> object:
+    """Return the processed grayscale PIL ``Image`` for *img_path*.
 
     Transparent pixels are composited onto a **black** background before
     converting to grayscale.  This matches the convention used by
@@ -74,6 +74,19 @@ def _load_image_grayscale(
     if target_size is not None and gray.size != target_size:
         gray = _fit_to_size(gray, target_size)
 
+    return gray
+
+
+def _load_image_grayscale(
+    img_path: Path,
+    target_size: tuple[int, int] | None = None,
+    downscale: int = 1,
+) -> tuple[int, int, object]:
+    """Return a (width, height, pixels) tuple where pixels[col, row] is 0-255.
+
+    Delegates image loading and processing to :func:`_load_processed_image`.
+    """
+    gray = _load_processed_image(img_path, target_size=target_size, downscale=downscale)
     return gray.width, gray.height, gray.load()
 
 
@@ -141,7 +154,7 @@ def _pixels_to_contours(
     pen,
     target_size: tuple[int, int] | None = None,
     downscale: int = 1,
-) -> None:
+) -> object:
     """Draw one closed square contour per foreground pixel into *pen*.
 
     Foreground pixels are those whose grayscale value is >= 128 (light).
@@ -161,10 +174,16 @@ def _pixels_to_contours(
 
     If *downscale* is greater than 1 the image is down-sampled before
     tracing (see :func:`_load_image_grayscale`).
+
+    Returns
+    -------
+    PIL.Image.Image
+        The processed grayscale image that was traced, so the caller can
+        reuse it (e.g. to save debug bitmaps) without re-processing.
     """
-    width, height, pixels = _load_image_grayscale(
-        img_path, target_size=target_size, downscale=downscale
-    )
+    gray = _load_processed_image(img_path, target_size=target_size, downscale=downscale)
+    pixels = gray.load()
+    width, height = gray.width, gray.height
     for row in range(height):
         for col in range(width):
             if pixels[col, row] >= 128:  # foreground / ink pixel
@@ -178,6 +197,7 @@ def _pixels_to_contours(
                 pen.lineTo((x1, y1))
                 pen.lineTo((x0, y1))
                 pen.closePath()
+    return gray
 
 
 def build_bitmap(
@@ -276,6 +296,9 @@ def build_bitmap(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    debug_dir = manifest_path.parent / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         safe_family = re.sub(r"[^\w\-]", "_", mf.family_name)
@@ -294,7 +317,9 @@ def build_bitmap(
             g.unicodes = [m.codepoint]
             g.width = advance_width  # identical for every glyph → monospace
 
-            _pixels_to_contours(
+            # _pixels_to_contours returns the processed grayscale image so we
+            # can save it as a debug bitmap without re-processing.
+            processed = _pixels_to_contours(
                 glyph_images[m.glyph_name],
                 img_width,
                 img_height,
@@ -303,6 +328,10 @@ def build_bitmap(
                 target_size=canonical_size,
                 downscale=downscale,
             )
+
+            # Save the processed glyph bitmap to the debug folder so that the
+            # exact pixel data used for tracing can be inspected.
+            processed.save(debug_dir / f"{m.glyph_name}.png")
 
         _ensure_notdef(ufo, advance_width)
         ufo.save(ufo_path)
